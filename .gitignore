@@ -30,3 +30,6 @@ __pycache__/
 # machine's temp directories, and the filename says local. A shared
 # .claude/settings.json would be committed; this one should not be.
 .claude/settings.local.json
+
+# Screenshots captured while testing the live update flow.
+update_*_live.png

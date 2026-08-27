@@ -518,7 +518,77 @@ def main():
     green.apply_map_modifiers(untouched)
     check("the default map leaves enemies alone", untouched.max_health == before)
 
+    print("\nterrain legibility")
 
+    def _lumas(tile_key):
+        image = assets.images[tile_key]
+        return sorted(0.2126 * image.get_at((x, y))[0]
+                      + 0.7152 * image.get_at((x, y))[1]
+                      + 0.0722 * image.get_at((x, y))[2]
+                      for y in range(image.get_height())
+                      for x in range(image.get_width()))
+
+    def _tile_luma(tile_key):
+        values = _lumas(tile_key)
+        return sum(values) / len(values)
+
+    # An obstacle you cannot pick out of the floor is an invisible wall. What is
+    # measured is the extremes, not the average: a tree averages close to the
+    # grass because it is a dark trunk under bright leaves, and is perfectly
+    # visible. Either direction counts — the obsidian reads as light against the
+    # ash and the stump reads as dark — but a *fifth of the tile* has to be that
+    # far away, so a lone glint pixel cannot carry it.
+    for spec in maps.MAPS:
+        floor = sum(_tile_luma(k) for k in spec.floor_keys) / len(spec.floor_keys)
+        for wall_key in spec.wall_keys:
+            values = _lumas(wall_key)
+            low, high = values[len(values) // 5], values[-len(values) // 5]
+            check(f"{wall_key} stands out from its floor",
+                  high - floor > 20 or floor - low > 14,
+                  f"  floor {floor:.0f}, obstacle 20th-80th {low:.0f}-{high:.0f}")
+
+    # The Hollow's floor used to carry a bright rune on nearly every tile, which
+    # is several hundred blue stars competing with the enemies. The light now
+    # lives on the obstacles instead.
+    def _brightest(tile_key):
+        image = assets.images[tile_key]
+        return max(max(image.get_at((x, y))[:3])
+                   for y in range(image.get_height())
+                   for x in range(image.get_width()))
+
+    check("The Hollow's floor carries no rune-light",
+          all(_brightest(k) < 120 for k in maps.HOLLOW.floor_keys),
+          f"  brightest {[_brightest(k) for k in maps.HOLLOW.floor_keys]}")
+    check("the spires carry it instead",
+          all(_brightest(k) > 180 for k in maps.HOLLOW.wall_keys[:2]))
+
+    # Floor patches laid in blobs rather than per tile. The failure this guards
+    # is a silent one: get the weights slicing wrong and the patch tile simply
+    # never appears, which looks like nothing at all rather than like a bug.
+    for spec in maps.MAPS:
+        arena = built[spec.key].arena
+        patch = len(spec.floor_keys) - 1
+        tiles = {(c, r) for r in range(arena.rows) for c in range(arena.cols)
+                 if arena.grid[r][c] == 0 and arena.variants[r][c] == patch}
+        share = len(tiles) / sum(row.count(0) for row in arena.grid)
+        check(f"{spec.label} lays about the patch coverage it asks for",
+              abs(share - spec.floor_weights[patch]) < 0.03,
+              f"  {share:.1%} vs {spec.floor_weights[patch]:.0%}")
+
+        lonely = sum(1 for c, r in tiles
+                     if not {(c + 1, r), (c - 1, r), (c, r + 1), (c, r - 1)} & tiles)
+        if spec.patch_tiles > 1:
+            check(f"{spec.label} patches are blobs, not speckle",
+                  lonely / max(1, len(tiles)) < 0.15,
+                  f"  {lonely}/{len(tiles)} tiles have no patch neighbour")
+        else:
+            check(f"{spec.label} still scatters its patch tile singly",
+                  lonely / max(1, len(tiles)) > 0.3,
+                  f"  {lonely}/{len(tiles)} tiles have no patch neighbour")
+
+    check("a blob is about as big as the map asks",
+          maps.CINDERWASTE.patch_tiles ** 2 == 4,
+          f"  {maps.CINDERWASTE.patch_tiles ** 2} tiles")
 
     print("\nfinding the altar")
     game.start_run("sword")

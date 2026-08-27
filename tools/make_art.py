@@ -80,12 +80,19 @@ _PALETTE_ENTRIES = [
     ("5", (128, 74, 42)),  # scorched light
     ("6", (196, 88, 36)),  # ember
     ("7", (255, 156, 62)),  # ember hot
-    ("8", (28, 24, 36)),  # obsidian dark
-    ("9", (56, 47, 72)),  # obsidian mid
-    ("0", (104, 88, 132)),  # obsidian light
-    ("!", (176, 158, 210)),  # obsidian glint
-    ("@", (40, 33, 30)),  # char dark
-    ("#", (66, 55, 46)),  # char light
+    # Cinderwaste obstacles, all pushed well clear of the ash they stand on.
+    # The old obsidian mid was (56, 47, 72) against ash light at (58, 53, 55):
+    # the same brightness, a few points apart in one channel. On a dark map that
+    # is not "subtle", it is invisible — you found the shards by walking into
+    # them. Same failure as the Greenwood trees, same fix.
+    ("8", (12, 10, 18)),  # obsidian outline, near black
+    ("9", (84, 70, 118)),  # obsidian mid
+    ("0", (150, 130, 194)),  # obsidian light
+    ("!", (216, 204, 246)),  # obsidian glint
+    ("@", (22, 17, 15)),  # char outline, near black
+    ("(", (74, 60, 46)),  # char mid
+    ("#", (112, 94, 72)),  # char light
+    (")", (22, 20, 22)),  # ground shadow cast on ash
     ("Q", (24, 22, 38)),  # void stone dark
     ("q", (34, 31, 52)),  # void stone mid
     ("w", (48, 44, 72)),  # void stone light
@@ -96,6 +103,18 @@ _PALETTE_ENTRIES = [
     ("J", (98, 78, 158)),  # crystal mid
     ("l", (168, 146, 232)),  # crystal light
     ("^", (226, 214, 255)),  # crystal glint
+    # Flagstone lit by a spire standing on it. These replaced the runes that
+    # used to be scattered across every floor tile: the same blue, but pooled
+    # around the thing that emits it instead of speckled over the whole arena.
+    ("[", (52, 58, 92)),  # void stone, faintly lit
+    ("]", (72, 92, 134)),  # void stone, lit
+    # Pillar masonry. Grey rather than another shade of the floor: with the
+    # runes gone the flagstones are uniformly dark blue-black, and a column
+    # drawn in floor colours plus an outline turned into a thin dark sliver —
+    # less visible than what it replaced. Grey also keeps it from reading as a
+    # short crystal, which is the other obstacle on this map.
+    ("{", (84, 88, 116)),  # pillar mid
+    ("}", (134, 140, 170)),  # pillar light
     ("a", (36, 132, 150)),
     ("A", (86, 214, 226)),
     ("i", (198, 250, 255)),
@@ -678,32 +697,131 @@ def ash_tile(rng, embers=3):
 
 
 def scorch_tile(rng):
-    """A burnt-through patch, sprinkled among the ash for variety."""
+    """A burnt-through patch. Fills the tile, because it is laid in blocks.
+
+    This used to be a circle of burnt earth about 24 pixels across, floating in
+    the middle of an ash tile, and the arena laid one tile at a time. The result
+    was a field of little brown dots rather than anything you would call a
+    patch.
+
+    Now ``Arena`` stamps several connected tiles at once (see ``patch_tiles`` in
+    ``maps.py``), so this tile has to *bleed to its own edges* — a blob inset
+    from the border would leave an ash seam down the middle of every patch,
+    which is worse than the dots. The irregularity comes from the shape of the
+    tile group instead, and from mottling the border so the outer edge is not a
+    ruled line.
+    """
     rows = [list(row) for row in ash_tile(rng, embers=1)]
-    cx, cy = TILE // 2, TILE // 2
+
     for y in range(TILE):
         for x in range(TILE):
-            wobble = rng.randint(-4, 4)
-            distance = (x - cx) ** 2 + (y - cy) ** 2
-            if distance <= (12 + wobble) ** 2:
-                rows[y][x] = "5" if rng.random() < 0.3 else "4"
-            elif distance <= (15 + wobble) ** 2 and rng.random() < 0.4:
+            rows[y][x] = "5" if rng.random() < 0.16 else "4"
+
+    # Darker cooler ground in blotches, so a large patch is not a flat field.
+    # More of them than a single-tile blob needed: four tiles of unbroken
+    # scorched earth is a lot of one colour, and the point of the change was to
+    # make the patches bigger, not louder.
+    for _ in range(22):
+        cx, cy = rng.randrange(TILE), rng.randrange(TILE)
+        radius = rng.randint(2, 6)
+        for y in range(max(0, cy - radius), min(TILE, cy + radius + 1)):
+            for x in range(max(0, cx - radius), min(TILE, cx + radius + 1)):
+                if (x - cx) ** 2 + (y - cy) ** 2 <= radius * radius:
+                    rows[y][x] = "4" if rng.random() < 0.5 else "3"
+
+    # Mottle the border. Where two scorch tiles meet this reads as cracking in
+    # the middle of the burn; where one meets plain ash it softens the join.
+    for y in range(TILE):
+        for x in range(TILE):
+            depth = min(x, y, TILE - 1 - x, TILE - 1 - y)
+            if depth < 3 and rng.random() < 0.22 + (2 - depth) * 0.08:
+                rows[y][x] = "3" if rng.random() < 0.6 else "1"
+
+    # Cracks and a few surviving embers.
+    for _ in range(rng.randint(2, 4)):
+        x, y = rng.randrange(TILE), rng.randrange(TILE)
+        for _ in range(rng.randint(6, 16)):
+            if 0 <= x < TILE and 0 <= y < TILE:
                 rows[y][x] = "3"
-    for _ in range(2):
-        x, y = rng.randrange(14, TILE - 14), rng.randrange(14, TILE - 14)
+            x += rng.choice((-1, 0, 1))
+            y += rng.choice((0, 1, 1))
+    for _ in range(3):
+        x, y = rng.randrange(4, TILE - 4), rng.randrange(4, TILE - 4)
         rows[y][x] = "7"
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            if rng.random() < 0.5:
+                rows[y + dy][x + dx] = "6"
     return ["".join(r) for r in rows]
 
 
+def _cast_shadow(rows, body, colour, offset=(2, 3)):
+    """Drop a shadow on the ground down-right of ``body``.
+
+    Cheap, and it does more for readability than any amount of tuning the
+    obstacle's own colours. A shape drawn flat on the floor is a pattern; the
+    same shape with a shadow is an object standing on the floor, and the eye
+    reads "I cannot walk there" from the second one without being told.
+    """
+    dx, dy = offset
+    for x, y in body:
+        sx, sy = x + dx, y + dy
+        if 0 <= sx < TILE and 0 <= sy < TILE and (sx, sy) not in body:
+            rows[sy][sx] = colour
+
+
+def _outline(rows, body, colour, thickness=2):
+    """Ring ``body`` in ``colour``, ``thickness`` pixels deep.
+
+    Two pixels, not one. At 40x40 a single-pixel outline is a hairline that the
+    eye averages into whatever it sits against, which on a dark, busy floor
+    means it vanishes exactly where it is needed most.
+    """
+    edge = set()
+    for x, y in body:
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            if (x + dx, y + dy) not in body:
+                edge.add((x, y))
+                break
+    ring = set(edge)
+    for _ in range(thickness - 1):
+        grown = set()
+        for x, y in body:
+            if (x, y) in ring:
+                continue
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                if (x + dx, y + dy) in ring:
+                    grown.add((x, y))
+                    break
+        ring |= grown
+    for x, y in ring:
+        rows[y][x] = colour
+    return ring
+
+
 def obsidian_tile(rng):
-    """Obstacle: a shard of volcanic glass thrust up out of the ash."""
+    """Obstacle: a shard of volcanic glass thrust up out of the ash.
+
+    Bigger and brighter than it was. The first version was drawn as black glass
+    on a near-black floor, which is what obsidian honestly is and which made it
+    an invisible wall: the shards occupied about a third of their tile in
+    colours within a few points of the ash. Realism loses to legibility here —
+    the player has to see cover from across the screen while running from a
+    horde, so the glass is lit hard from the upper left, ringed in near-black
+    and given a shadow, and it now fills most of its tile.
+    """
     rows = [list(row) for row in ash_tile(rng, embers=1)]
 
-    # Two or three angular spikes rather than a blob — glass fractures straight.
-    peaks = [(20, 6, 9), (13, 12, 6), (27, 14, 7)]
+    # Angular spikes rather than a blob — glass fractures straight. Taller and
+    # wider than before so the silhouette carries at a glance.
+    # Jittered per tile. The fixed peak list made ``wall_obsidian_0`` and
+    # ``wall_obsidian_1`` the same picture with different speckle, which is two
+    # asset slots spent on one shape.
+    peaks = [(20 + rng.randint(-2, 2), 3 + rng.randint(0, 3), rng.randint(10, 13)),
+             (11 + rng.randint(-2, 2), 9 + rng.randint(0, 4), rng.randint(6, 9)),
+             (29 + rng.randint(-2, 2), 11 + rng.randint(0, 4), rng.randint(7, 10))]
     shard = set()
     for tip_x, tip_y, half in peaks:
-        height = TILE - 6 - tip_y
+        height = TILE - 3 - tip_y
         for step in range(height):
             y = tip_y + step
             span = int(half * step / max(1, height - 1))
@@ -711,48 +829,95 @@ def obsidian_tile(rng):
                 if 0 <= x < TILE and 0 <= y < TILE:
                     shard.add((x, y))
 
-    for x, y in shard:
-        lit = (x - 20) < -2
-        if lit:
-            rows[y][x] = "0" if rng.random() < 0.65 else "9"
-        else:
-            rows[y][x] = "9" if rng.random() < 0.6 else "8"
+    _cast_shadow(rows, shard, ")")
 
     for x, y in shard:
-        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            if (x + dx, y + dy) not in shard:
-                rows[y][x] = "8"
-                break
-    # A couple of glints along the lit edge.
-    for _ in range(3):
-        x, y = rng.randrange(12, 20), rng.randrange(10, 30)
-        if (x, y) in shard:
+        # Light from the upper left, matching every other obstacle in the game.
+        lit = (x - 20) + (y - 20) < -4
+        shaded = (x - 20) + (y - 20) > 10
+        if lit:
+            rows[y][x] = "0" if rng.random() < 0.75 else "!"
+        elif shaded:
+            rows[y][x] = "9" if rng.random() < 0.7 else "0"
+        else:
+            rows[y][x] = "0" if rng.random() < 0.55 else "9"
+
+    _outline(rows, shard, "8")
+
+    # Glints along the lit faces, inside the outline.
+    for _ in range(5):
+        x, y = rng.randrange(11, 21), rng.randrange(8, 32)
+        if (x, y) in shard and rows[y][x] != "8":
             rows[y][x] = "!"
     return ["".join(r) for r in rows]
 
 
 def stump_tile(rng):
-    """Obstacle: what is left of a tree after the fire went through."""
+    """Obstacle: what is left of a tree after the fire went through.
+
+    Charcoal on ash had the same problem the obsidian did — the old char light
+    was (66, 55, 46) against ash at (46, 42, 46), which is not a contrast, it is
+    a rounding error. The wood is now clearly lighter than the ground it stands
+    on, outlined and shadowed like the trees in Greenwood.
+    """
     rows = [list(row) for row in ash_tile(rng, embers=2)]
 
-    for y in range(14, 36):
-        width = 6 if y < 30 else 8
+    trunk = set()
+    for y in range(11, 37):
+        width = 8 if y < 30 else 10
         for x in range(20 - width, 20 + width):
             if 0 <= x < TILE:
-                rows[y][x] = "#" if x < 18 else "@"
-    # Splintered crown.
-    for x in range(12, 28):
-        top = 14 + rng.randint(0, 4)
-        for y in range(top, 18):
-            rows[y][x] = "@"
+                trunk.add((x, y))
+    # Splintered crown: a ragged top edge rather than a flat cut.
+    for x in range(12, 29):
+        for y in range(11 - rng.randint(0, 3), 11):
+            if 0 <= y < TILE:
+                trunk.add((x, y))
+
+    _cast_shadow(rows, trunk, ")")
+
+    for x, y in trunk:
+        # Lit across most of the width, not just the left third. Charcoal is
+        # dark and the ash is dark, so the only thing keeping this readable is
+        # how much of it is clearly lighter than the ground — a narrow lit strip
+        # left the tile averaging out to "slightly different ash".
+        lit = x < 21
+        rows[y][x] = ("#" if rng.random() < 0.75 else "(") if lit else (
+            "(" if rng.random() < 0.6 else "@")
+
+    # Growth rings on the cut face, so the top reads as a stump and not a post.
+    for radius in (4, 8):
+        for angle in range(0, 360, 6):
+            x = int(20 + math.cos(math.radians(angle)) * radius)
+            y = int(16 + math.sin(math.radians(angle)) * radius * 0.55)
+            if (x, y) in trunk:
+                rows[y][x] = "@"
+
+    _outline(rows, trunk, "@")
+
+    # Embers still alive down in the roots.
     for _ in range(4):
-        x, y = rng.randrange(14, 26), rng.randrange(28, 35)
-        rows[y][x] = "6" if rng.random() < 0.5 else "7"
+        x, y = rng.randrange(15, 26), rng.randrange(28, 35)
+        if (x, y) in trunk:
+            rows[y][x] = "6" if rng.random() < 0.5 else "7"
     return ["".join(r) for r in rows]
 
 
-def void_tile(rng, runes=1):
-    """The Hollow's floor: worked stone with old runework still lit."""
+def void_tile(rng, runes=0):
+    """The Hollow's floor: worked stone, dark and quiet.
+
+    ``runes`` used to default to 1, and all three floor variants took the
+    default — so roughly nine tiles in ten across the whole arena carried a
+    bright cyan eight-pointed star. At 40 pixels a tile that is several hundred
+    stars on screen at once, each one about the size of a projectile and about
+    as bright, competing for attention with every enemy and every pickup on the
+    busiest map in the game.
+
+    The light did not go away, it moved: ``spire_tile`` now pools it around the
+    crystals, which is where a light source belongs and which has the useful
+    side effect of marking the obstacles. Kept as a parameter because a rune
+    tile is still the right thing for a shrine or a boss floor.
+    """
     rows = [["q"] * TILE for _ in range(TILE)]
 
     for _ in range(24):
@@ -797,12 +962,16 @@ def abyss_tile(rng):
                 rows[y][x] = "z"
             elif distance <= (15 + wobble) ** 2:
                 rows[y][x] = "Q"
+    # Chips of pale stone at the rim, where the floor broke through. These used
+    # to be rune glow — three pixels of cyan per tile, which sounds like nothing
+    # until you notice the abyss covers an eighth of the map and the whole point
+    # of this pass was to get the blue speckle off the floor.
     for _ in range(3):
         angle = rng.uniform(0, 6.28)
         x = int(cx + math.cos(angle) * 8)
         y = int(cy + math.sin(angle) * 8)
         if 0 <= x < TILE and 0 <= y < TILE:
-            rows[y][x] = "Z"
+            rows[y][x] = "w"
     return ["".join(r) for r in rows]
 
 
@@ -821,6 +990,30 @@ def spire_tile(rng):
                 if 0 <= x < TILE and 0 <= y < TILE:
                     crystal.add((x, y))
 
+    # The light the floor runes used to carry, pooled around its source. Two
+    # bands of falloff rather than a smooth gradient: at this size a gradient
+    # over five pixels is dithering noise, while two flat steps read as a glow.
+    # It stops at the tile edge, which is a real limitation of drawing the
+    # ground as independent tiles — but the pool is small enough that the cut
+    # lands inside the mottling and nobody reads it as a seam.
+    near, far = set(), set()
+    for x, y in crystal:
+        for dy in range(-4, 5):
+            for dx in range(-4, 5):
+                spot = (x + dx, y + dy)
+                if spot in crystal or not (0 <= spot[0] < TILE and 0 <= spot[1] < TILE):
+                    continue
+                reach = dx * dx + dy * dy
+                if reach <= 4:
+                    near.add(spot)
+                elif reach <= 16:
+                    far.add(spot)
+    for x, y in far - near:
+        if rng.random() < 0.75:
+            rows[y][x] = "["
+    for x, y in near:
+        rows[y][x] = "]" if rng.random() < 0.7 else "["
+
     for x, y in crystal:
         lit = (x - 20) < -1
         rows[y][x] = ("l" if rng.random() < 0.6 else "J") if lit else (
@@ -838,24 +1031,59 @@ def spire_tile(rng):
 
 
 def pillar_tile(rng):
-    """Obstacle: a broken column from whatever this place used to be."""
+    """Obstacle: a broken column from whatever this place used to be.
+
+    Outlined and shadowed like everything else you can walk into. It never had
+    that, and it got away with it while the floor was covered in rune-light to
+    contrast against; with the runes gone the column and the flagstone under it
+    are both dark grey-blue, so the edge has to be drawn explicitly.
+    """
     rows = [list(row) for row in void_tile(rng, runes=0)]
 
-    for y in range(8, 36):
-        for x in range(13, 27):
-            rows[y][x] = "w" if x < 19 else "q"
-    # Ragged break across the top.
-    for x in range(13, 27):
-        for y in range(8, 8 + rng.randint(0, 5)):
-            rows[y][x] = "Q"
-    # Base plinth and a lit seam up the shaft.
-    for y in range(33, 37):
-        for x in range(11, 29):
-            rows[y][x] = "Q" if y > 34 else "w"
+    # Much wider than it was. A tile is a wall for its full 40 pixels, so a
+    # 14-pixel sprite in the middle of one leaves a band of apparently-empty
+    # floor you cannot walk through on every side — the invisible wall you feel
+    # rather than see. Measured: the old column filled a fifth of its tile once
+    # the outline had eaten into it, which is not enough to register at a
+    # glance on a floor this dark.
+    column = set()
+    for y in range(5, 36):
+        for x in range(11, 30):
+            column.add((x, y))
+    # Base plinth, wider than the shaft.
+    for y in range(32, 38):
+        for x in range(8, 33):
+            column.add((x, y))
+    # Ragged break across the top: bite pixels out rather than recolour them,
+    # so the outline follows the broken silhouette.
+    for x in range(11, 30):
+        for y in range(5, 5 + rng.randint(0, 6)):
+            column.discard((x, y))
+
+    _cast_shadow(rows, column, "Q", offset=(2, 2))
+
+    for x, y in column:
+        rows[y][x] = "}" if x < 19 else "{"
+    # Fluting: shallow vertical grooves, which is most of what says "column".
+    # One step down the ramp, not several — cut in floor colour they stopped
+    # being grooves and became dark stripes running through the shaft, which
+    # measurably cost more contrast against the flagstones than the detail was
+    # worth.
+    for x in (15, 22, 26):
+        for y in range(8, 34):
+            if (x, y) in column:
+                rows[y][x] = "{"
+    for y in range(32, 38):
+        for x in range(8, 33):
+            if (x, y) in column:
+                rows[y][x] = "{" if y > 35 else "}"
+    # A lit seam up the shaft — the one place rune-light still belongs, because
+    # here it is on the object rather than scattered over open floor.
     for y in range(14, 32, 4):
-        rows[y][19] = "Z"
-    for x in range(13, 27):
-        rows[8 + rng.randint(0, 3)][x] = "Q"
+        if (19, y) in column:
+            rows[y][19] = "Z"
+
+    _outline(rows, column, "z")
     return ["".join(r) for r in rows]
 
 

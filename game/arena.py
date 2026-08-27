@@ -74,15 +74,75 @@ class Arena:
         """
         spec = self.map_def
         self.variants = [[0] * self.cols for _ in range(self.rows)]
+
+        # A map with ``patch_tiles`` set takes its last floor variant out of the
+        # per-tile draw and lays it in connected groups afterwards instead.
+        patch_index = None
+        if spec.patch_tiles > 1 and len(spec.floor_keys) > 1:
+            patch_index = len(spec.floor_keys) - 1
+
+        floor_weights = spec.floor_weights
+        if patch_index is not None:
+            floor_weights = floor_weights[:patch_index]
+
         for row in range(self.rows):
             for col in range(self.cols):
                 if self.grid[row][col] == WALL:
-                    keys, weights = spec.wall_keys, spec.wall_weights
+                    weights = spec.wall_weights
                 else:
-                    keys, weights = spec.floor_keys, spec.floor_weights
+                    weights = floor_weights
                 self.variants[row][col] = self.rng.choices(
-                    range(len(keys)), weights=weights, k=1
+                    range(len(weights)), weights=weights, k=1
                 )[0]
+
+        if patch_index is not None:
+            self._scatter_patches(patch_index,
+                                  spec.floor_weights[patch_index],
+                                  spec.patch_tiles ** 2)
+
+    def _scatter_patches(self, index, share, tiles_each):
+        """Lay the patch floor tile in blobs of ``tiles_each`` connected tiles.
+
+        Choosing it per tile, which is what every map did before, gives a field
+        of isolated 40px speckles — the tile art is a patch of burnt ground, but
+        one tile of it is a dot. Grouping the tiles is what turns them into
+        something the eye reads as a feature of the terrain.
+
+        The blob grows by repeatedly attaching a random neighbour rather than
+        stamping a square. Four tiles in a square is a square, and a floor
+        strewn with identical squares looks authored; the same four tiles as an
+        L or an S or a line look like ground. Walls are written over freely —
+        they keep their own wall variant, so a blob that runs into an obstacle
+        simply flows around it, which is exactly what a scorch mark would do.
+
+        Coverage is held at roughly the weight the map asked for: one blob
+        covers ``tiles_each`` tiles, so the number of blobs is the share of the
+        arena divided by that.
+        """
+        blobs = int(round(self.cols * self.rows * share / tiles_each))
+        for _ in range(max(1, blobs)):
+            col = self.rng.randint(1, self.cols - 2)
+            row = self.rng.randint(1, self.rows - 2)
+            chosen = {(col, row)}
+            frontier = [(col, row)]
+            # Bounded rather than "until it fits": near an arena edge the walk
+            # can run out of legal neighbours, and an unbounded loop would spin
+            # there forever.
+            for _ in range(tiles_each * 8):
+                if len(chosen) >= tiles_each:
+                    break
+                fx, fy = self.rng.choice(frontier)
+                dx, dy = self.rng.choice(((1, 0), (-1, 0), (0, 1), (0, -1)))
+                spot = (fx + dx, fy + dy)
+                if spot in chosen:
+                    continue
+                if not (1 <= spot[0] < self.cols - 1 and 1 <= spot[1] < self.rows - 1):
+                    continue
+                chosen.add(spot)
+                frontier.append(spot)
+            for spot_col, spot_row in chosen:
+                if self.grid[spot_row][spot_col] == FLOOR:
+                    self.variants[spot_row][spot_col] = index
 
     def _flatten(self):
         """Pack the wall map into one flat ``bytes`` for fast collision tests.

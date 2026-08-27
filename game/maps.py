@@ -40,6 +40,14 @@ class MapDef:
     cluster_max: int = 6
     spawn_clear_radius: float = 260.0
 
+    # How big a blob of the *last* floor variant should be, measured in tiles
+    # along one side — so 2 means blobs of four tiles. 1 keeps the old
+    # behaviour of choosing it independently per tile, which reads as speckle.
+    # The tile art has to bleed to its own edges for this to work, or the seams
+    # inside a blob show through; ``floor_scorch`` does, ``floor_dirt`` and
+    # ``floor_abyss`` do not, which is why only Cinderwaste sets it.
+    patch_tiles: int = 1
+
     enemy_health_mult: float = 1.0
     enemy_speed_mult: float = 1.0
     spawn_mult: float = 1.0
@@ -95,6 +103,7 @@ CINDERWASTE = MapDef(
     cols=88, rows=56,
     floor_keys=("floor_ash_0", "floor_ash_1", "floor_ash_2", "floor_scorch"),
     floor_weights=(0.31, 0.29, 0.27, 0.13),
+    patch_tiles=2,                   # scorch laid in blobs of four tiles
     wall_keys=("wall_obsidian_0", "wall_obsidian_1", "wall_stump"),
     wall_weights=(0.38, 0.34, 0.28),
     obstacle_clusters=150,

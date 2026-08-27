@@ -25,6 +25,11 @@ __pycache__/
 # what a repository should carry, and committing them means a fresh clone can
 # build straight away instead of needing the generators run first. Delete
 # these lines and add assets/ if that ever stops being the right trade.
+#
+# The exception is assets/old/, where tools/make_art.py moves the previous
+# version of anything it is about to overwrite. That is an undo buffer for the
+# working copy; git already keeps the history.
+assets/old/
 
 # Claude Code's per-machine permission state. Absolute paths to this
 # machine's temp directories, and the filename says local. A shared

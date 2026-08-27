@@ -247,6 +247,11 @@ rem This exists because Windows will not let a running .exe be overwritten, so
 rem the swap has to outlive the process doing the updating.
 setlocal
 
+rem A breadcrumb written before anything else, and deleted on success. If an
+rem update ever fails silently again, whether this file exists says immediately
+rem whether the script ran at all — which is the first thing worth knowing.
+echo Started, waiting for pid {pid}. > "{log}"
+
 rem Wait for the game to close. tasklist is used rather than a fixed sleep so a
 rem slow shutdown does not race the copy.
 :wait
@@ -272,6 +277,7 @@ robocopy "{staging}" "{app}" /mir /is /it /xd "{staging}" /njh /njs /ndl /nfl /n
 if errorlevel 8 goto failed
 
 rmdir /s /q "{staging}"
+del "{log}" 2>nul
 start "" "{exe}"
 del "%~f0"
 exit /b 0
@@ -312,8 +318,23 @@ def apply_and_restart(staging, app_dir=None, exe_path=None):
         # must not flash a window in the player's face.
         creation = getattr(subprocess, "DETACHED_PROCESS", 0) | \
                    getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    # stdin/stdout/stderr are pinned to DEVNULL rather than inherited, and that
+    # is load-bearing rather than tidiness.
+    #
+    # A --windowed PyInstaller build has no console, so there are no valid
+    # standard handles to hand on. Combined with DETACHED_PROCESS — which also
+    # denies the child a console of its own — cmd.exe starts with invalid
+    # handles and dies immediately. Popen still returns a process object without
+    # raising, so the caller concludes the handoff worked and quits, and the
+    # update silently never happens: the old build stays installed, the staging
+    # folder is orphaned, and nothing anywhere records why.
+    #
+    # This cost a full round trip on a real install to find, because every test
+    # run from source had a console to inherit and worked perfectly.
     subprocess.Popen(["cmd", "/c", script], close_fds=True, creationflags=creation,
-                     cwd=tempfile.gettempdir())
+                     cwd=tempfile.gettempdir(),
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL)
     return script
 
 

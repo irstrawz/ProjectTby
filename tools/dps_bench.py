@@ -99,7 +99,11 @@ def measure(weapon_cls, level, moving=None):
     if moving is None:
         moving = True
 
-    world.director.spawn_rate = lambda: 0.0        # no interference
+    # No interference. ``*_`` rather than a matching signature on purpose: this
+    # bench broke silently once already when ``spawn_rate`` grew a chaos
+    # multiplier argument and the stub here did not, and a stub that only exists
+    # to return zero has no business caring what it is passed.
+    world.director.spawn_rate = lambda *_, **__: 0.0
     world.director.spawn_surge = lambda w: None
     world.director.spawn_boss = lambda w, from_altar=False: None
     world.director.recycle_strays = lambda w: None

@@ -151,6 +151,14 @@ class Player(Entity):
         self.elite_kills = 0
         self.revives = int(self.meta.get("revive", 0))
 
+        # Level-up charges, bought in the Sanctum and refilled per run. They
+        # live on the player rather than on the Game so they survive stepping
+        # through a portal — ``World(carry=...)`` hands the same player to the
+        # next arena, and a run's worth of rerolls that silently reset on the
+        # second map would be a nasty surprise.
+        self.rerolls = int(self.meta.get("reroll", 0))
+        self.skips = int(self.meta.get("skip", 0))
+
     # -- derived stats -------------------------------------------------------
     def meta_bonus(self, key):
         return PASSIVE_EFFECTS.get(key, 0) * self.meta.get(key, 0)

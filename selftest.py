@@ -7,6 +7,7 @@ event/update/draw path the windowed game uses. Runs against a throwaway save
 file, so your real progress is never touched.
 """
 
+import math
 import os
 import sys
 
@@ -105,6 +106,26 @@ def main():
     check("a purchase applies", game.save.level_of("health") == before + 1)
     check("a purchase writes the save file", os.path.exists(scratch))
 
+    # The grid grew to four rows when Foresight and Restraint were added, and at
+    # the card height it had then the bottom row sat underneath the Back button.
+    shop_cards = ui.shop_rects()
+    check("every Sanctum card fits above the Back button",
+          max(r.bottom for r in shop_cards) < ui.shop_back_rect().top
+          and all(0 <= r.left and r.right <= config.SCREEN_WIDTH for r in shop_cards),
+          f"  {len(shop_cards)} cards end at {max(r.bottom for r in shop_cards)}, "
+          f"Back starts at {ui.shop_back_rect().top}")
+    check("Sanctum cards do not overlap",
+          not any(a.colliderect(b) for i, a in enumerate(shop_cards)
+                  for b in shop_cards[i + 1:]))
+    # Every entry has to reach the player, and the only way it does is by key.
+    # A shop entry whose key nothing reads is a purchase that costs gold and
+    # changes nothing, with no error to say so.
+    from game.entities import PASSIVE_EFFECTS
+    unread = [e.key for e in save_module.SHOP_ENTRIES
+              if e.key not in PASSIVE_EFFECTS
+              and e.key not in ("revive", "reroll", "skip")]
+    check("every Sanctum entry is read by something", not unread, f"  orphaned: {unread}")
+
     click(ui.shop_back_rect().center)
     step()
     check("the Sanctum returns to the title", game.state == "title")
@@ -152,6 +173,98 @@ def main():
     click(ui.level_up_card_rects(len(game.offers))[0].center)
     step()
     check("clicking a card resumes play", game.state == "playing")
+
+    print("\nrerolls and skips")
+    reroll_rect, skip_rect = ui.level_up_action_rects()
+    cards = ui.level_up_card_rects(4)
+    check("the action buttons clear the cards",
+          reroll_rect.top >= max(r.bottom for r in cards)
+          and skip_rect.bottom <= config.SCREEN_HEIGHT,
+          f"  cards end {max(r.bottom for r in cards)}, buttons {reroll_rect.top}")
+    check("the action buttons do not overlap each other",
+          not reroll_rect.colliderect(skip_rect))
+
+    from game.world import World as _World
+    stocked = _World({"reroll": 3, "skip": 5}, seed=2)
+    check("Sanctum charges reach the run",
+          stocked.player.rerolls == 3 and stocked.player.skips == 5,
+          f"  {stocked.player.rerolls} rerolls, {stocked.player.skips} skips")
+    check("a run with nothing bought has no charges",
+          _World({}, seed=2).player.rerolls == 0)
+
+    stocked.player.rerolls, stocked.player.skips = 1, 2
+    onward = _World({"reroll": 3, "skip": 5}, seed=3,
+                    map_key=maps.CINDERWASTE.key, carry=stocked)
+    check("charges carry through a portal rather than refilling",
+          onward.player.rerolls == 1 and onward.player.skips == 2,
+          f"  {onward.player.rerolls} rerolls, {onward.player.skips} skips")
+
+    player = game.world.player
+    player.rerolls, player.skips = 2, 1
+    player.pending_level_ups = 1
+    step()
+    check("a level-up opens with charges in hand", game.state == "level_up")
+
+    before = [o.title for o in game.offers]
+    click(reroll_rect.center)
+    step()
+    check("rerolling spends one charge", player.rerolls == 1, f"  {player.rerolls} left")
+    check("rerolling stays on the level-up screen", game.state == "level_up")
+    check("rerolling does not consume the level",
+          player.pending_level_ups == 1)
+    # The hand may legitimately come back the same by chance, so this asks only
+    # that the roll happened, not that it differed.
+    check("rerolling produces a full hand", len(game.offers) >= 1,
+          f"  was {before}, now {[o.title for o in game.offers]}")
+
+    key(pygame.K_r)
+    step()
+    check("R rerolls too", player.rerolls == 0)
+    key(pygame.K_r)
+    step()
+    check("rerolling with no charges does nothing",
+          player.rerolls == 0 and game.state == "level_up")
+
+    weapons_before = len(player.weapons)
+    passives_before = len(player.passives)
+    key(pygame.K_x)
+    step()
+    check("skipping returns to play", game.state == "playing")
+    check("skipping spends one charge", player.skips == 0)
+    check("skipping consumes the pending level", player.pending_level_ups == 0)
+    check("skipping grants nothing",
+          len(player.weapons) == weapons_before
+          and len(player.passives) == passives_before)
+
+    player.skips = 0
+    player.pending_level_ups = 1
+    step()
+    key(pygame.K_x)
+    step()
+    check("skipping with no charges does nothing",
+          game.state == "level_up" and player.pending_level_ups == 1)
+    key(pygame.K_1)
+    step()
+
+    check("a normal hand can be rerolled",
+          upgrades.can_reroll(upgrades.roll_offers(player, game.world.rng)))
+
+    # A fusion comes back deterministically and alone, so rerolling one would
+    # spend a charge and hand back the identical card. Same for the Reliquary
+    # that appears when the pool is empty.
+    from game.entities import Player as PlayerClass
+    ready = PlayerClass(game.world.arena.center, {})
+    evo = weapons.EVOLUTIONS[0]
+    ready.weapons = [weapons.WEAPONS_BY_KEY[k]() for k in evo.ingredients]
+    for weapon in ready.weapons:
+        weapon.level = weapons.FUSION_LEVEL
+    fusion_hand = upgrades.roll_offers(ready, game.world.rng)
+    check("a fusion hand reports itself unrerollable",
+          fusion_hand[0].kind == "fusion" and not upgrades.can_reroll(fusion_hand))
+    check("the Reliquary is unrerollable too",
+          not upgrades.can_reroll([upgrades._fallback_offer()]))
+
+    player.rerolls, player.skips = 0, 0
 
     print("\nslot caps")
     game.state = "playing"
@@ -629,6 +742,30 @@ def main():
           pygame.image.tostring(game.painter.to_surface(), "RGB")
           != pygame.image.tostring(before, "RGB"))
 
+    # Shake used to be added on top of an already-clamped follow position, so
+    # at an arena edge the camera walked off the ground and Arena.draw clipped
+    # its source rect, leaving a strip of the screen showing the previous frame.
+    arena = world.arena
+    camera = world.camera
+    for corner in (pygame.Vector2(20, 20),
+                   pygame.Vector2(arena.width - 20, arena.height - 20)):
+        world.player.pos.update(corner)
+        camera.trauma = 0.0
+        camera.add_trauma(1.0)
+        off = []
+        for _ in range(120):
+            camera.update(world.player.pos, 1 / 60, world.rng,
+                          (arena.width, arena.height))
+            camera.trauma = 1.0            # hold it shaking hard
+            wanted = pygame.Rect(math.ceil(camera.x), math.ceil(camera.y),
+                                 config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
+            visible = wanted.clip(pygame.Rect(0, 0, arena.width, arena.height))
+            if visible.size != wanted.size:
+                off.append((wanted.x, wanted.y))
+        check(f"a hard shake at {int(corner.x)},{int(corner.y)} keeps the ground on screen",
+              not off, f"  {len(off)}/120 frames ran off, e.g. {off[:1]}")
+    camera.trauma = 0.0
+
     print("\nportals and travel")
 
     game.start_run("sword")
@@ -925,6 +1062,22 @@ def main():
 
     check("the fusion is not offered twice",
           not any(o.kind == "fusion" for o in upgrades.roll_offers(player, world.rng)))
+
+    # Every fusion, not just the first: the loop above proves the machinery
+    # works, this proves each recipe is wired to the machinery. A typo'd
+    # ingredient key would show up here as a fusion that never unlocks.
+    from game.entities import Player as _Player
+    for evo in weapons.EVOLUTIONS:
+        candidate = _Player(world.arena.center, {})
+        candidate.weapons = [weapons.WEAPONS_BY_KEY[k]() for k in evo.ingredients]
+        for weapon in candidate.weapons:
+            weapon.level = weapons.FUSION_LEVEL
+        offered = upgrades.roll_offers(candidate, world.rng)
+        check(f"{evo.label} unlocks from {' + '.join(evo.ingredients)}",
+              any(o.kind == "fusion" and o.title == evo.label for o in offered))
+        offered[0].apply(candidate)
+        check(f"{evo.label} replaces its ingredients",
+              [w.key for w in candidate.weapons] == [evo.key])
 
     print("\nweapon select layout")
     rects = ui.weapon_select_rects(len(weapons.WEAPON_TYPES))

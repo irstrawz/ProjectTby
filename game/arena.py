@@ -315,6 +315,10 @@ class Camera:
         self.offset = pygame.Vector2()
         self.trauma = 0.0
         self._shake = pygame.Vector2()
+        # How far the camera may travel before it runs off the arena. Infinite
+        # until the first ``update`` sets it from the real bounds, so a camera
+        # that has never been updated behaves exactly as it always did.
+        self._limit = (float("inf"), float("inf"))
 
     def add_trauma(self, amount):
         # Scaled here rather than at the ~15 call sites that add trauma: one
@@ -323,10 +327,11 @@ class Camera:
 
     def update(self, target_pos, dt, rng, bounds=None):
         width, height = bounds if bounds else (GREENWOOD.width, GREENWOOD.height)
+        self._limit = (max(0.0, width - SCREEN_WIDTH), max(0.0, height - SCREEN_HEIGHT))
         self.offset.x = target_pos.x - SCREEN_WIDTH / 2
         self.offset.y = target_pos.y - SCREEN_HEIGHT / 2
-        self.offset.x = max(0.0, min(self.offset.x, width - SCREEN_WIDTH))
-        self.offset.y = max(0.0, min(self.offset.y, height - SCREEN_HEIGHT))
+        self.offset.x = max(0.0, min(self.offset.x, self._limit[0]))
+        self.offset.y = max(0.0, min(self.offset.y, self._limit[1]))
 
         self.trauma = max(0.0, self.trauma - dt * 1.9)
         if self.trauma > 0:
@@ -337,13 +342,21 @@ class Camera:
         else:
             self._shake.update(0, 0)
 
+    # Shake is clamped as well as the follow position, not just added on top.
+    # ``offset`` alone was clamped, so at an arena edge a shake pushed the
+    # camera past the ground and ``Arena.draw`` clipped its source rect — up to
+    # 16 pixels of the screen edge went uncovered, showing whatever the previous
+    # frame left there. Clamping here rather than inside ``Arena.draw`` is what
+    # keeps the ground and the sprites agreeing: both read these properties, so
+    # correcting one without the other would trade a smeared band for a world
+    # that shears apart whenever the screen shakes near a wall.
     @property
     def x(self):
-        return self.offset.x + self._shake.x
+        return min(max(0.0, self.offset.x + self._shake.x), self._limit[0])
 
     @property
     def y(self):
-        return self.offset.y + self._shake.y
+        return min(max(0.0, self.offset.y + self._shake.y), self._limit[1])
 
     def to_screen(self, world_pos):
         return (world_pos[0] - self.x, world_pos[1] - self.y)

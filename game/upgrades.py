@@ -280,6 +280,22 @@ def roll_chest_reward(player, rng=None):
     )
 
 
+# Kinds a reroll can actually change. Fusions are returned deterministically
+# and alone, and the Reliquary fallback appears only when the pool is empty, so
+# rerolling either one is guaranteed to hand back the identical card.
+REROLLABLE_KINDS = frozenset({"weapon", "new_weapon", "passive"})
+
+
+def can_reroll(offers):
+    """Would rerolling these offers be able to produce anything different?
+
+    Guards a dead end rather than a crash: without it, spending a charge on a
+    fusion screen burns the charge and redraws the same card, and the player
+    has no way to tell that was always going to happen.
+    """
+    return any(offer.kind in REROLLABLE_KINDS for offer in offers)
+
+
 def offer_count(player, rng=None, base=3):
     """How many cards this level-up shows. Fortune sometimes buys a fourth."""
     rng = rng or random

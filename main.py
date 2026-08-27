@@ -185,9 +185,47 @@ class Game:
 
     def open_level_up(self):
         audio.play("levelup")
-        count = upgrades.offer_count(self.world.player, self.world.rng)
-        self.offers = upgrades.roll_offers(self.world.player, self.world.rng, count)
+        self.roll_level_up_offers()
         self.state = "level_up"
+
+    def roll_level_up_offers(self):
+        player = self.world.player
+        count = upgrades.offer_count(player, self.world.rng)
+        self.offers = upgrades.roll_offers(player, self.world.rng, count)
+
+    def can_reroll(self):
+        return (self.state == "level_up"
+                and self.world.player.rerolls > 0
+                and upgrades.can_reroll(self.offers))
+
+    def can_skip(self):
+        return self.state == "level_up" and self.world.player.skips > 0
+
+    def reroll_offers(self):
+        """Spend a charge for a fresh hand. Same level-up, new cards."""
+        if not self.can_reroll():
+            return False
+        self.world.player.rerolls -= 1
+        audio.play("ui_select")
+        self.roll_level_up_offers()
+        return True
+
+    def skip_offer(self):
+        """Spend a charge to take nothing.
+
+        Worth having because weapon and passive slots are finite: once they are
+        full, every card on offer either deepens something or wastes the slot,
+        and refusing all three is sometimes the strongest move — particularly
+        when a fusion needs two specific weapons kept at the top of the list.
+        """
+        if not self.can_skip():
+            return False
+        self.world.player.skips -= 1
+        audio.play("ui_select")
+        self.world.player.pending_level_ups -= 1
+        self.offers = []
+        self.state = "playing"
+        return True
 
     def choose_offer(self, index):
         if not (0 <= index < len(self.offers)):
@@ -278,8 +316,17 @@ class Game:
                 self.state = "title"
             return
 
-        if self.state == "level_up" and pygame.K_1 <= event.key <= pygame.K_4:
-            self.choose_offer(event.key - pygame.K_1)
+        if self.state == "level_up":
+            if pygame.K_1 <= event.key <= pygame.K_4:
+                self.choose_offer(event.key - pygame.K_1)
+            elif event.key == pygame.K_r:
+                self.reroll_offers()
+            elif event.key == pygame.K_x:
+                # X rather than the obvious S. S is "walk down", and a player
+                # still holding it when the level-up opens is one keystroke away
+                # from throwing the level-up away by accident — for a charge
+                # they paid gold for, with no undo.
+                self.skip_offer()
 
     def on_click(self, pos, mouse_pos):
         if self.state == "settings":
@@ -324,6 +371,11 @@ class Game:
                 if rect.collidepoint(pos):
                     self.choose_offer(index)
                     return
+            reroll, skip = ui.level_up_action_rects()
+            if reroll.collidepoint(pos):
+                self.reroll_offers()
+            elif skip.collidepoint(pos):
+                self.skip_offer()
 
         elif self.state == "paused":
             for label, rect in zip(PAUSE_OPTIONS, ui.button_rects(len(PAUSE_OPTIONS), top=PAUSE_TOP)):
@@ -447,7 +499,7 @@ class Game:
         if self.state == "shop":
             return list(ui.shop_rects()) + [ui.shop_back_rect()]
         if self.state == "level_up":
-            return ui.level_up_card_rects(len(self.offers))
+            return ui.level_up_card_rects(len(self.offers)) + ui.level_up_action_rects()
         if self.state == "paused":
             return ui.button_rects(len(PAUSE_OPTIONS), top=PAUSE_TOP)
         if self.state == "settings":
@@ -510,7 +562,10 @@ class Game:
             ui.draw_hud(surface, self.world)
             if self.state == "level_up":
                 ui.draw_level_up(surface, self.offers, mouse_pos,
-                                 self.world.player.pending_level_ups)
+                                 self.world.player.pending_level_ups,
+                                 rerolls=self.world.player.rerolls,
+                                 skips=self.world.player.skips,
+                                 reroll_ok=upgrades.can_reroll(self.offers))
             elif self.state == "paused":
                 ui.draw_pause(surface, PAUSE_OPTIONS, mouse_pos,
                               self.settings.sfx_volume, self.settings.music_volume,

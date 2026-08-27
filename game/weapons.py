@@ -1540,6 +1540,195 @@ class WalkingEruption(TrailWeapon):
                                max(1, core // 3))
 
 
+class FrostfireOrb(Weapon):
+    """Fireball + Frost Orb. Rolls, freezes, then shatters and burns.
+
+    Built on Frost Orb's shape rather than Fireball's because the orb is the
+    more interesting half: a slow projectile that holds an area is something no
+    other weapon does, while a lobbed bomb is close to what Lightning Strike and
+    Walking Eruption already deliver. So the orb keeps rolling and keeps
+    freezing, and Fireball's contribution is what happens when it dies.
+
+    The freeze is the reason to build this. Frost Orb only stops things outright
+    at level 8, its very last rank; the fusion does it from level 1, which is
+    the payoff for having taken both weapons all the way there.
+    """
+
+    key = "frostfire"
+    sound = "frost"
+    label = "Frostfire Orb"
+    description = "Orbs that freeze whatever they roll over, then shatter into burning shards."
+    max_level = 6
+    color = (176, 216, 255)
+    base_cooldown = 1.5
+    evolved = True
+
+    def __init__(self):
+        super().__init__()
+        # Same shape as FrostOrb's: the weapon owns them because they damage an
+        # area over time rather than colliding once.
+        self.orbs = []
+
+    # Tighter than Frost Orb's 0.8. The per-enemy hit cooldown, not the damage
+    # number, is what decides how much this actually does to a packed swarm —
+    # Frost Orb's own comment records finding that out the hard way.
+    hit_cooldown = 0.5
+
+    # **These numbers look wrong next to the other fusions, and are not.** The
+    # bar a fusion has to clear is the pair it eats, and this pair is by far the
+    # strongest in the game: Fireball and Frost Orb maxed measure 5,765 DPS
+    # together, against 3,177 for the two Solar Beams, 3,298 for the trails and
+    # 3,937 for Strike + Coil. The first draft of this weapon was written to
+    # look like Walking Eruption's numbers and measured 0.47x its ingredients at
+    # level 1 — a fusion that made you weaker for taking it, and the only reason
+    # anyone would have known is that the bench says so. Retune against
+    # ``tools/dps_bench.py``, not against the class above.
+    @property
+    def damage(self):
+        return 230 + 9 * (self.level - 1)
+
+    @property
+    def burst_damage(self):
+        # Held near-flat, like the other three fusions: a fusion has to beat its
+        # ingredients on the level it arrives at, which leaves little room to
+        # grow before it dwarfs the rest of the game. All four now land between
+        # 1.2x and 1.3x at level 1 and 2.5x to 2.7x at level 6.
+        return 660 + 45 * (self.level - 1)
+
+    @property
+    def orb_radius(self):
+        return 84 + 2 * (self.level - 1)
+
+    @property
+    def burst_radius(self):
+        return self.orb_radius * 1.8
+
+    @property
+    def count(self):
+        # Flat. Orb count multiplies against radius and against the shatter,
+        # and letting all three grow is how Tempest ended up five times its own
+        # ingredients before its strikes were pinned down.
+        return 3
+
+    @property
+    def burn_dps(self):
+        return 75 + 8 * (self.level - 1)
+
+    def cooldown(self, player):
+        return max(0.80, self.base_cooldown - 0.08 * (self.level - 1)) * player.cooldown_mult
+
+    def upgrade_text(self):
+        return "+45 shatter damage, bigger orbs, hotter burn, faster casts"
+
+    def burn_spec(self):
+        return StatusSpec(key=BURN, duration=3.0, dps=self.burn_dps, interval=0.5,
+                          weapon_key=self.key)
+
+    def chill_spec(self):
+        # A full stop, not a slow. Short, because a permanent freeze on three
+        # orbs this size would simply switch the enemies off.
+        return StatusSpec(key=CHILL, duration=1.5, slow=1.0, weapon_key=self.key)
+
+    def fire(self, world):
+        player = world.player
+        base = pygame.Vector2(player.aim)
+        if base.length_squared() < 0.001:
+            base = pygame.Vector2(0, 1)
+
+        count = self.shot_count(world)
+        for index in range(count):
+            spread = (index - (count - 1) / 2) * 30
+            self.orbs.append({
+                "pos": pygame.Vector2(player.pos),
+                "vel": base.rotate(spread) * 320,
+                "travel": 0.95,
+                "linger": 0.6,
+                "cooldowns": {},
+            })
+
+    def update(self, dt, world):
+        super().update(dt, world)
+
+        chill = self.chill_spec()
+        radius = self.orb_radius
+
+        for orb in self.orbs:
+            if orb["travel"] > 0:
+                orb["travel"] -= dt
+                orb["pos"] += orb["vel"] * dt
+                if orb["travel"] <= 0:
+                    orb["vel"].update(0, 0)
+            else:
+                orb["linger"] -= dt
+
+            cooldowns = orb["cooldowns"]
+            for key in list(cooldowns):
+                cooldowns[key] -= dt
+                if cooldowns[key] <= 0:
+                    del cooldowns[key]
+
+            for enemy in world.enemies_near(orb["pos"], radius + 40):
+                if not enemy.alive or id(enemy) in cooldowns:
+                    continue
+                if orb["pos"].distance_to(enemy.pos) <= radius + enemy.radius:
+                    world.damage_enemy(enemy, self.damage, source_pos=orb["pos"],
+                                       knockback=70, weapon_key=self.key)
+                    if enemy.alive:
+                        enemy.apply_status(chill)
+                    cooldowns[id(enemy)] = self.hit_cooldown
+
+        spent = [orb for orb in self.orbs if orb["linger"] <= 0]
+        for orb in spent:
+            self.shatter(world, orb["pos"])
+        if spent:
+            self.orbs = [orb for orb in self.orbs if orb["linger"] > 0]
+
+    def shatter(self, world, point):
+        """The Fireball half: everything the orb froze now gets set alight."""
+        radius = self.burst_radius
+        audio.play("erupt")
+        world.effects.shockwave(point, radius, (200, 230, 255), life=0.3)
+        world.effects.burst(point, (255, 190, 130), count=16, speed=radius * 3.0,
+                            life=0.38, radius=5)
+        world.camera.add_trauma(0.07)
+
+        burn = self.burn_spec()
+        for enemy in world.enemies_near(point, radius + 40):
+            if not enemy.alive:
+                continue
+            distance = point.distance_to(enemy.pos)
+            if distance > radius + enemy.radius:
+                continue
+            falloff = 1.0 - 0.5 * min(1.0, distance / max(1.0, radius))
+            world.damage_enemy(enemy, self.burst_damage * falloff, source_pos=point,
+                               knockback=200, weapon_key=self.key)
+            if enemy.alive:
+                enemy.apply_status(burn)
+
+    def draw(self, painter, camera, world):
+        radius = int(self.orb_radius)
+        for orb in self.orbs:
+            # The orb visibly heats up as its linger runs out, so the shatter is
+            # something you can see coming and walk enemies into rather than a
+            # surprise going off behind you.
+            settling = orb["travel"] <= 0
+            charge = 1.0 - max(0.0, min(1.0, orb["linger"] / 0.6)) if settling else 0.0
+            disc = pygame.Surface((radius * 2, radius * 2), pygame.SRCALPHA)
+            centre = (radius, radius)
+            pygame.draw.circle(disc, (90, 170, 255, 62), centre, radius)
+            pygame.draw.circle(disc, (190, 235, 255, 155), centre, radius, 3)
+            if charge > 0:
+                # Small and opaque rather than large and translucent. A wide
+                # half-transparent orange over the blue fill averages out to
+                # brown and reads as a patch of dirt on the ground; a tighter
+                # core at high alpha reads as fire inside ice, which is the
+                # whole idea of the weapon.
+                pygame.draw.circle(disc, (255, 128, 38, int(90 + 150 * charge)),
+                                   centre, max(2, int(radius * (0.16 + 0.32 * charge))))
+            pygame.draw.circle(disc, (255, 245, 235, 200), centre, max(3, radius // 5))
+            painter.blit(disc, disc.get_rect(center=camera.to_screen(orb["pos"])))
+
+
 # Base weapons: offerable at level-up and pickable as a starting weapon.
 WEAPON_TYPES = [Sword, HomingBolts, Rapier, WardingSigils, ArcCoil,
                 Fireball, PoisonAura, FrostOrb,
@@ -1547,7 +1736,7 @@ WEAPON_TYPES = [Sword, HomingBolts, Rapier, WardingSigils, ArcCoil,
                 EarthTrail, FireTrail]
 
 # Fusions: only reachable by maxing both ingredients.
-EVOLVED_TYPES = [RadiantBeam, Tempest, WalkingEruption]
+EVOLVED_TYPES = [RadiantBeam, Tempest, WalkingEruption, FrostfireOrb]
 
 
 class Evolution:
@@ -1604,6 +1793,7 @@ EVOLUTIONS = [
     Evolution(RadiantBeam, ("solar_h", "solar_v")),
     Evolution(Tempest, ("strike", "coil")),
     Evolution(WalkingEruption, ("earth", "fire")),
+    Evolution(FrostfireOrb, ("fireball", "frost")),
 ]
 
 WEAPONS_BY_KEY = {cls.key: cls for cls in WEAPON_TYPES + EVOLVED_TYPES}

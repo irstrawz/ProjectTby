@@ -233,13 +233,62 @@ def level_up_card_rects(count):
     ]
 
 
+ACTION_SIZE = (232, 48)
+ACTION_GAP = 24
+ACTION_TOP = 556
+
+
+def level_up_action_rects():
+    """Reroll and Skip, side by side under the cards.
+
+    Fixed geometry rather than derived from the card row: the cards shrink when
+    Fortune produces a fourth, and two buttons that move about between level-ups
+    are two buttons you have to look for every time.
+    """
+    width, height = ACTION_SIZE
+    total = width * 2 + ACTION_GAP
+    left = SCREEN_WIDTH // 2 - total // 2
+    return [
+        pygame.Rect(left, ACTION_TOP, width, height),
+        pygame.Rect(left + width + ACTION_GAP, ACTION_TOP, width, height),
+    ]
+
+
 def rect_wrap_width(pixel_width):
     """Characters that fit across a card. Cards shrink when a fourth appears,
     so the wrap point has to shrink with them or the text runs off the edge."""
     return int((pixel_width - 32) / 10.6)
 
 
-def draw_level_up(surface, offers, mouse_pos, pending):
+def _draw_level_up_actions(surface, mouse_pos, rerolls, skips, reroll_ok):
+    """The two charge buttons. Greyed when they cannot be used, not hidden.
+
+    Hiding them would be tidier and worse: a player who has never bought
+    Foresight would have no idea the Sanctum sells it, and a player who has run
+    out mid-run would think the feature broke.
+    """
+    rects = level_up_action_rects()
+    for rect, (label, key, charges, usable) in zip(rects, (
+            ("Reroll", "R", rerolls, rerolls > 0 and reroll_ok),
+            ("Skip", "X", skips, skips > 0))):
+        hovered = usable and rect.collidepoint(mouse_pos)
+        panel(surface, rect, hovered)
+        if not usable:
+            # Dim the whole button rather than only its text, so "spent" reads
+            # at a glance next to a live one.
+            veil = pygame.Surface(rect.size, pygame.SRCALPHA)
+            veil.fill((10, 10, 22, 150))
+            surface.blit(veil, rect.topleft)
+        tone = COL_TEXT if usable else (108, 110, 128)
+        text(surface, f"{label} ({key})", (rect.x + 18, rect.centery), 26, tone,
+             bold=hovered, anchor="midleft")
+        text(surface, f"{charges} left", (rect.right - 18, rect.centery), 24,
+             COL_GOLD if usable else (110, 98, 74), anchor="midright")
+    return rects
+
+
+def draw_level_up(surface, offers, mouse_pos, pending,
+                  rerolls=0, skips=0, reroll_ok=True):
     dim(surface)
     text(surface, "LEVEL UP", (SCREEN_WIDTH // 2, 108), 74, COL_GOLD, bold=True, anchor="center")
     subtitle = "Choose an upgrade" if pending <= 1 else f"Choose an upgrade  ({pending} pending)"
@@ -286,9 +335,11 @@ def draw_level_up(surface, offers, mouse_pos, pending):
             text(surface, "and a bonus passive", (rect.centerx, rect.bottom - 22),
                  22, tier.color, anchor="center")
 
+    _draw_level_up_actions(surface, mouse_pos, rerolls, skips, reroll_ok)
+
     keys = " / ".join(str(i + 1) for i in range(len(offers)))
     text(surface, f"Click a card or press {keys}",
-         (SCREEN_WIDTH // 2, SCREEN_HEIGHT - 70), 24, COL_DIM, anchor="center")
+         (SCREEN_WIDTH // 2, SCREEN_HEIGHT - 44), 24, COL_DIM, anchor="center")
     return rects
 
 
@@ -636,19 +687,27 @@ def _draw_kills_panel(surface, result, box):
 # ---------------------------------------------------------------------------
 
 SHOP_COLS = 3
-SHOP_CARD = (380, 118)
+# Eleven entries is four rows, and at the old 118px card with a 16px gap the
+# bottom row overlapped the Back button. Shorter cards and a tighter grid buy
+# the row back without dropping to a scrolling list or a fourth column, which
+# would squeeze the descriptions. ``selftest`` asserts the grid still clears
+# Back, so the next entry added cannot quietly reintroduce the overlap.
+SHOP_CARD = (380, 110)
+SHOP_TOP = 142
+SHOP_GAP_X = 18
+SHOP_GAP_Y = 10
 
 
 def shop_rects():
     rects = []
-    total_width = SHOP_COLS * SHOP_CARD[0] + (SHOP_COLS - 1) * 18
+    total_width = SHOP_COLS * SHOP_CARD[0] + (SHOP_COLS - 1) * SHOP_GAP_X
     start_x = SCREEN_WIDTH // 2 - total_width // 2
     for index in range(len(SHOP_ENTRIES)):
         col, row = index % SHOP_COLS, index // SHOP_COLS
         rects.append(
             pygame.Rect(
-                start_x + col * (SHOP_CARD[0] + 18),
-                150 + row * (SHOP_CARD[1] + 16),
+                start_x + col * (SHOP_CARD[0] + SHOP_GAP_X),
+                SHOP_TOP + row * (SHOP_CARD[1] + SHOP_GAP_Y),
                 *SHOP_CARD,
             )
         )
@@ -679,7 +738,7 @@ def draw_shop(surface, save, mouse_pos):
         pip_x = rect.x + 16
         for pip in range(entry.max_level):
             color = COL_GOLD if pip < level else (58, 58, 78)
-            pygame.draw.rect(surface, color, (pip_x + pip * 16, rect.y + 82, 11, 11),
+            pygame.draw.rect(surface, color, (pip_x + pip * 16, rect.y + 78, 11, 11),
                              border_radius=2)
 
         if maxed:
@@ -687,7 +746,7 @@ def draw_shop(surface, save, mouse_pos):
         else:
             label = f"{entry.cost(level)} g"
             color = COL_GOLD if affordable else (120, 100, 70)
-        text(surface, label, (rect.right - 16, rect.y + 78), 28, color, bold=True,
+        text(surface, label, (rect.right - 16, rect.y + 72), 28, color, bold=True,
              anchor="topright")
 
     back = shop_back_rect()

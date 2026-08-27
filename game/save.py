@@ -63,6 +63,12 @@ SHOP_ENTRIES = [
     ShopEntry("crit", "Keen Edge", "+5% critical hit chance", 5, 80),
     ShopEntry("regen", "Rootbound", "+0.5 health regen per second", 5, 90),
     ShopEntry("revive", "Second Wind", "Survive one lethal hit per run", 2, 250, 2.5),
+    # Charges spent at the level-up screen, refilled at the start of every run.
+    # Capped low on purpose: a reroll turns a bad hand into a good one every
+    # time, so an unlimited supply would remove the only real decision the
+    # level-up screen asks you to make.
+    ShopEntry("reroll", "Foresight", "+1 level-up reroll per run", 3, 110, 1.8),
+    ShopEntry("skip", "Restraint", "+1 level-up skip per run", 5, 60, 1.55),
 ]
 SHOP_BY_KEY = {entry.key: entry for entry in SHOP_ENTRIES}
 

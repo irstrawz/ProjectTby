@@ -1197,6 +1197,17 @@ def main():
           "  0.10.0 > 0.9.0")
     check("the same version is not newer", not version_module.is_newer(
         version_module.VERSION, version_module.VERSION))
+    # is_newer's "current" resolves inside the call, not as a default argument.
+    # A default is evaluated once at import, which would freeze whatever VERSION
+    # was then and quietly ignore any later change — invisible in production,
+    # and it made the live update path untestable.
+    _real = version_module.VERSION
+    try:
+        version_module.VERSION = "0.1.0"
+        check("is_newer follows VERSION rather than a frozen default",
+              version_module.is_newer("0.2.0"))
+    finally:
+        version_module.VERSION = _real
 
     # The save must never live inside the folder an update replaces.
     frozen_app = os.path.join(_tempfile.gettempdir(), "pretend-install")

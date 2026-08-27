@@ -38,5 +38,15 @@ def parse(text):
     return tuple(parts[:3])
 
 
-def is_newer(candidate, current=VERSION):
-    return parse(candidate) > parse(current)
+def is_newer(candidate, current=None):
+    """Is ``candidate`` a later version than ``current`` (default: this build)?
+
+    ``current`` resolves inside the function rather than as ``current=VERSION``
+    in the signature. A default argument is evaluated once when the module is
+    imported, so the signature form freezes whatever VERSION was at import and
+    silently ignores any later change to it. Nothing reassigns VERSION at
+    runtime today, but the frozen form is a trap: it makes the function
+    untestable against any version other than the built-in one, and the failure
+    looks like the comparison being wrong rather than the default being stale.
+    """
+    return parse(candidate) > parse(VERSION if current is None else current)

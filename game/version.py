@@ -18,7 +18,9 @@ VERSION = "0.2.0"
 # whose SHA-256 does not match the manifest. Both matter for the same reason:
 # this feature downloads a zip and replaces the game with its contents, so
 # whoever controls this URL controls what runs on your players' machines.
-UPDATE_MANIFEST_URL = ""
+UPDATE_MANIFEST_URL = (
+    "https://github.com/irstrawz/ProjectTby/releases/latest/download/manifest.json"
+)
 
 
 def parse(text):

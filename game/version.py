@@ -4,7 +4,7 @@ Kept in its own module with no imports so that the build script, the updater and
 the title screen can all read it without dragging pygame in.
 """
 
-VERSION = "0.3.0"
+VERSION = "0.4.0"
 
 # Where the updater looks for the latest release. It fetches a small JSON
 # manifest — see ``tools/build_exe.py`` for the exact shape it writes.

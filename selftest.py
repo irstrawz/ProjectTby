@@ -1294,7 +1294,7 @@ def main():
             check("a tampered download is refused", True)
         check("no partial download is left behind",
               not [f for f in os.listdir(_tempfile.gettempdir())
-                   if f.startswith("projecttby-update-")])
+                   if f.startswith("projecttby-download-")])
 
         evil = os.path.join(work, "evil.zip")
         with _zipfile.ZipFile(evil, "w") as archive:
@@ -1322,13 +1322,19 @@ def main():
     finally:
         _shutil.rmtree(work, ignore_errors=True)
 
-    swap = updater.SWAP_SCRIPT.format(pid=1, staging="S", app="A", exe="E", log="L")
+    swap = updater.SWAP_SCRIPT.format(staging="S", app="A", exe="E", log="L")
     commands = [line.strip() for line in swap.splitlines()
                 if line.strip() and not line.strip().lower().startswith(("rem", "@"))]
     # A detached, windowless script has no console, so "pause" would hang a
     # hidden process forever with no way to dismiss it.
     check("the swap script never pauses", not any(c.lower() == "pause" for c in commands))
-    check("the swap script waits for the game to exit", "PID eq 1" in swap)
+    # Synchronisation is robocopy's retries, not process polling. Waiting on a
+    # process id meant parsing tasklist output, which was observed wedging
+    # forever when the filter did not apply and "N" matched a memory column.
+    check("the swap script retries locked files instead of polling a pid",
+          "/R:20 /W:2" in swap
+          and not any("tasklist" in line for line in swap.splitlines()
+                      if not line.strip().startswith("rem")))
     check("the swap script purges files a new build drops", "/mir" in swap)
     check("the swap script does not mirror away its own staging", '/xd "S"' in swap)
     check("the swap script restarts the game on both paths",

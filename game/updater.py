@@ -148,7 +148,9 @@ def download(update, on_progress=None, fetch=None):
     """
     fetch = fetch or _https_fetch
     digest = hashlib.sha256()
-    handle, temp_path = tempfile.mkstemp(prefix="projecttby-update-", suffix=".zip")
+    # Prefix distinct from the swap script's log, which used to share it and
+    # made a leftover log indistinguishable from a leaked partial download.
+    handle, temp_path = tempfile.mkstemp(prefix="projecttby-download-", suffix=".zip")
     os.close(handle)
 
     try:
@@ -241,39 +243,34 @@ def stage(zip_path, app_dir=None):
 
 SWAP_SCRIPT = r"""@echo off
 rem Written by game/updater.py. Replaces the application folder once the game
-rem has exited, then restarts it.
+rem has let go of its files, then restarts it.
 rem
 rem This exists because Windows will not let a running .exe be overwritten, so
 rem the swap has to outlive the process doing the updating.
 setlocal
 
-rem A breadcrumb written before anything else, and deleted on success. If an
-rem update ever fails silently again, whether this file exists says immediately
-rem whether the script ran at all — which is the first thing worth knowing.
-echo Started, waiting for pid {pid}. > "{log}"
+rem A breadcrumb written before anything else and deleted on success. If an
+rem update ever fails silently, whether this file exists says immediately
+rem whether the script ran at all.
+echo Started. > "{log}"
 
-rem Wait for the game to close. tasklist is used rather than a fixed sleep so a
-rem slow shutdown does not race the copy.
-:wait
-tasklist /fi "PID eq {pid}" 2>nul | find "{pid}" >nul
-if not errorlevel 1 (
-  ping -n 2 127.0.0.1 >nul
-  goto wait
-)
+rem A moment for the caller to quit. It hands off and then exits immediately,
+rem so this is usually already true; robocopy's retries cover the rest.
+ping -n 4 127.0.0.1 >nul
 
-rem /mir mirrors: copy everything, and delete anything in the destination the
-rem new version no longer ships. Without the purge, a file dropped between
-rem releases lingers on every machine that ever installed the old one — which is
-rem how an install ends up in a state the developer has never seen.
+rem /R:20 /W:2 retries a locked file for about forty seconds. That is the whole
+rem synchronisation strategy, and it replaced waiting on a process id.
 rem
-rem /xd keeps the staging folder itself out of the mirror. It lives inside the
-rem application folder, so without this /mir would try to delete the very
-rem directory it is copying from.
+rem The previous version polled `tasklist /fi "PID eq N" | find "N"`. That hangs
+rem forever when the filter does not apply for any reason — tasklist then prints
+rem every process, and "N" reliably turns up somewhere in the memory or handle
+rem columns, so `find` keeps matching a game that exited long ago. It was
+rem observed doing exactly that, wedged, with the game long gone.
 rem
-rem /is /it force same and "tweaked" files to be copied too; robocopy otherwise
-rem skips files it judges identical, and a rebuilt-but-byte-identical file would
-rem be left as the old one.
-robocopy "{staging}" "{app}" /mir /is /it /xd "{staging}" /njh /njs /ndl /nfl /nc /ns >nul
+rem Retrying the copy needs no notion of who is running: the only thing that
+rem actually matters is whether the files can be written yet, and that is what
+rem this asks.
+robocopy "{staging}" "{app}" /mir /is /it /xd "{staging}" /R:20 /W:2 /njh /njs /ndl /nfl /nc /ns >nul
 if errorlevel 8 goto failed
 
 rmdir /s /q "{staging}"
@@ -284,8 +281,8 @@ exit /b 0
 
 :failed
 rem No "pause" here. This script is launched detached and windowless, so there
-rem is no console for anyone to press a key at — pause would simply hang a
-rem hidden process forever. Write the reason down and leave the install alone.
+rem is no console for anyone to press a key at. Write the reason down, put the
+rem old build back in front of them, and get out of the way.
 echo Update failed: robocopy returned %errorlevel%. > "{log}"
 echo The existing installation was left unchanged. >> "{log}"
 rmdir /s /q "{staging}"
@@ -309,8 +306,8 @@ def apply_and_restart(staging, app_dir=None, exe_path=None):
         # ASCII: the script is run by cmd.exe, which reads batch files in the
         # console codepage, not UTF-8. A non-ASCII character in a path would be
         # mangled and the copy would target the wrong folder.
-        handle.write(SWAP_SCRIPT.format(pid=os.getpid(), staging=staging,
-                                        app=app_dir, exe=exe_path, log=log))
+        handle.write(SWAP_SCRIPT.format(staging=staging, app=app_dir,
+                                        exe=exe_path, log=log))
 
     creation = 0
     if os.name == "nt":
